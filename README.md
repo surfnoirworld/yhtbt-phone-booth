@@ -10,7 +10,7 @@ Built for the [Gemini Live Agent Challenge](https://geminiliveagentchallenge.dev
 
 [youhadtobethere.life](https://youhadtobethere.life) is a phone directory built around the album *You Had to Be There* by Cam Murdoch. Each number plays a song or a real voicemail from Cam's journey — leaving home, traveling the world, and coming back changed.
 
-Number 100 is different. When you dial it, a real-time voice agent named **Aza Fre** picks up. She's a 22-year-old travel agent from Nearstalgia Bay who found Cam's directory and wants you to go through it with her. She recruits you, sends you to specific numbers, and when you call back she responds to what you actually heard. The conversation is natural, interruptible, and contextually aware.
+Number 100 is different. When you dial it, a real-time voice agent named **Aza Fre** picks up. She's a 22-year-old travel agent from Nearstalgia Bay who found Cam's directory and is trying to piece together where Cam went. She recruits you to go through the directory with her, sends you to specific numbers, and when you call back she responds to what you actually heard. Over time she starts asking about your life too — not just Cam's. The conversation is natural, interruptible, and contextually aware.
 
 It is not a chatbot. It is a phone call.
 
@@ -57,6 +57,8 @@ Google Cloud Run (FastAPI + ADK)
 adk-streaming/
 ├── Dockerfile
 ├── requirements.txt
+├── deploy.sh                      # Automated Cloud Run deployment script
+├── yhtbt-architecture-diagram.svg
 └── app/
     ├── .env
     ├── main.py                    # FastAPI server with WebSocket streaming
@@ -70,81 +72,123 @@ adk-streaming/
             └── voicemail_transcripts.txt  # Reference material for reactions
 ```
 
-## Spin Up Locally
+## Reproduce Locally — Step by Step
 
 ### Prerequisites
-- Python 3.10+
+- Python 3.10 or later
+- pip
 - A Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey)
-- Google Cloud project with Firestore enabled (optional — app works without it)
+- A microphone and a modern browser (Chrome recommended)
+- Google Cloud project with Firestore enabled (optional — the agent works without it, session memory just won't persist)
 
-### Setup
+### 1. Clone and set up environment
 
 ```bash
-# Clone the repo
-git clone https://github.com/YOUR_USERNAME/yhtbt-phone-booth.git
+git clone https://github.com/surfnoirworld/yhtbt-phone-booth.git
 cd yhtbt-phone-booth/adk-streaming
 
-# Create virtual environment
 python -m venv .venv
 source .venv/bin/activate
 
-# Install dependencies
 pip install -r requirements.txt
+```
 
-# Configure environment
+### 2. Configure your API key
+
+```bash
 cd app
 echo 'GOOGLE_GENAI_USE_VERTEXAI=FALSE' > .env
 echo 'GOOGLE_API_KEY=your_api_key_here' >> .env
 ```
 
-### Run with ADK Dev UI (voice testing)
+Replace `your_api_key_here` with your actual Gemini API key from Google AI Studio.
+
+### 3. Run the agent locally
 
 ```bash
-cd app
 export SSL_CERT_FILE=$(python -m certifi)
 adk web
 ```
 
-Opens at http://localhost:8000. Select `aza_agent`, click the microphone, and talk.
+This launches the ADK dev UI at http://localhost:8000.
 
-### Run with FastAPI Server (production mode)
+### 4. Test the agent
+
+1. Open http://localhost:8000 in Chrome
+2. Select **aza_agent** from the dropdown in the upper right
+3. Click the **microphone button** (voice only — text input does not work with native audio models)
+4. Say **"Hello?"** and wait for Aza to respond
+
+**What to expect:** Aza picks up thinking you might be Cam. She reacts to whoever you are, then recruits you to go through a phone directory with her. She gives you numbers 104, 105, and 106 to start.
+
+### 5. Test a returning caller
+
+1. Stop the agent (Ctrl+C)
+2. Restart with `adk web`
+3. Click the microphone
+4. Say **"Hey, I called those numbers you told me about"**
+
+**What to expect:** Aza should skip the intro and ask which numbers you listened to, then respond to what you tell her and give you the next set.
+
+### 6. Test the Cam claim
+
+1. When Aza asks who you are, say **"I'm Cam"**
+
+**What to expect:** She does not believe you. She says something like "even if you are Cam, that doesn't change what I need" and redirects you into the experience like any other caller.
+
+## Run with FastAPI Server (production mode)
 
 ```bash
 cd app
 python main.py
 ```
 
-Starts at http://localhost:8080. WebSocket endpoint at `/ws/{caller_id}`.
+Starts at http://localhost:8080. WebSocket endpoint at `/ws/{caller_id}`. This is the same server that runs on Cloud Run. It requires a frontend to test voice — the ADK dev UI (above) is easier for local testing.
 
 ## Deploy to Google Cloud Run
 
+### Using the deploy script (recommended)
+
 ```bash
 cd adk-streaming
+chmod +x deploy.sh
+./deploy.sh your_project_id your_api_key
+```
 
+This enables all required GCP APIs, sets IAM permissions, creates a Firestore database, and deploys to Cloud Run in one command.
+
+### Manual deploy
+
+```bash
+cd adk-streaming
 gcloud run deploy yhtbt-phone-booth --source . --region us-east1 --allow-unauthenticated --set-env-vars "GOOGLE_API_KEY=your_key,GOOGLE_GENAI_USE_VERTEXAI=FALSE" --memory 1Gi --timeout 300 --session-affinity
 ```
 
 ## The Agent
 
 ### Who She Is
-Aza Fre, 22, works at Excursion Club in Nearstalgia Bay. She found Cam's travel videos, got fascinated by the journey, dug deeper into the phone directory, and eventually reached Cam and invited him to Nearstalgia Bay. Now she wants other people to experience the directory.
+Aza Fre, 22, works at Excursion Club in Nearstalgia Bay. She found Cam's travel videos online, got fascinated by the journey, and started digging through a phone directory Cam left behind. She has not found Cam. She is still looking. She thinks two people listening to the directory might catch something one person missed.
 
 ### What She Does
 - Answers expecting someone else, reacts when she gets a stranger
-- Recruits the caller to listen to specific numbers on the directory
+- Recruits the caller to go through the directory with her
 - Responds to their interpretation of what they heard — no wrong answers
 - Moves them through 11 narrative cycles with branching paths
-- At the end, invites them to Nearstalgia Bay (number 757)
+- Starts asking about the caller's own life as the conversation deepens
+- Remembers things the caller said earlier and brings them back when relevant
+- At the end, reveals she found Cam and invites the caller to Nearstalgia Bay (number 757)
 
 ### What She Won't Do
 - Confirm there's a game
 - Break character
 - Give numbers without real engagement first
 - Say where she's from
+- Reveal where Cam is (until the very end)
 - Sound like an assistant
+- Correct the caller's interpretation — every answer is valid
 
 ### The Story Structure
-11 cycles tracing Cam's journey from leaving home to coming back changed. Two branching points (Cycles 2 and 5) where the caller's interpretation determines which path they take. Every answer is valid. Nobody gets stuck.
+11 cycles tracing Cam's journey from leaving home to coming back changed. Two branching points (Cycles 2 and 5) where the caller's interpretation determines which path they take. Personal questions about the caller's own life woven in starting around Cycle 3. The reveal at the end is earned — it only happens after the full journey.
 
 ## Audio Specs
 
@@ -164,9 +208,9 @@ Aza Fre, 22, works at Excursion Club in Nearstalgia Bay. She found Cam's travel 
 - Google Cloud Firestore
 
 ### Judging Criteria Addressed
-- **Innovation & Multimodal UX (40%):** Fully realized character with distinct persona, 11-cycle branching narrative, persistent session memory, lives inside an existing ARG campaign
-- **Technical Implementation (30%):** ADK with Gemini Live API, Firestore session tracking, Cloud Run deployment, WebSocket bidirectional audio streaming
-- **Demo & Presentation (30%):** Live demo through actual phone directory site, real conversation with barge-in support
+- **Innovation & Multimodal UX (40%):** Fully realized character with distinct persona, 11-cycle branching narrative, personal questions about the caller's life, persistent session memory, lives inside an existing ARG campaign with an active audience
+- **Technical Implementation (30%):** ADK with Gemini Live API, Firestore session tracking, Cloud Run deployment with automated deploy script, WebSocket bidirectional audio streaming
+- **Demo & Presentation (30%):** Live demo through actual phone directory site, real conversation with barge-in support, architecture diagram included
 
 ## Credits
 
